@@ -7,9 +7,10 @@ on:
   workflow_dispatch:
   # Daily incremental ingest + rebuild during a live season. Disabled: the 2026
   # season is over and data/cruz.sqlite holds the final cache.
-  # To enable next season:
+  # To enable next season (after opening day, once a game is final):
   #   1. Set the repo variable SEASON (e.g. 2027) under Settings > Variables > Actions.
   #   2. Uncomment the two lines below. 13:00 UTC runs after overnight games are final.
+  # The ingest job pushes straight to main, so main must not require PRs for this bot.
   # schedule:
   #   - cron: "0 13 * * *"
 
@@ -18,30 +19,58 @@ permissions:
 
 concurrency:
   group: pages-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded PR runs; never cancel a run that may be committing or deploying.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   SEASON: ${{ vars.SEASON || '2026' }}
 
 jobs:
-  build:
+  ingest:
+    if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
-      # Write access is only used by the scheduled run to commit the refreshed cache.
       contents: write
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v10
+      # setup-uv publishes no floating major tag; pin an exact release.
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          enable-cache: true
+
+      - run: uv sync --locked
+
+      - run: uv run ingest --season "$SEASON"
+
+      - name: Commit refreshed cache
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/cruz.sqlite
+          git diff --cached --quiet && exit 0
+          git commit -m "Daily ingest $(date -u +%F)"
+          git pull --rebase
+          git push
+
+  build:
+    needs: ingest
+    # Runs when ingest succeeded or was skipped (every non-scheduled event).
+    if: ${{ !cancelled() && needs.ingest.result != 'failure' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Scheduled runs build the cache the ingest job just pushed.
+          ref: ${{ github.event_name == 'schedule' && 'main' || '' }}
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           enable-cache: true
 
       - name: Install
         run: uv sync --locked
-
-      - name: Ingest (scheduled runs only)
-        if: github.event_name == 'schedule'
-        run: uv run ingest --season "$SEASON"
 
       - name: Lint
         run: |
@@ -54,15 +83,6 @@ jobs:
       - name: Build site
         run: uv run build --season "$SEASON"
 
-      - name: Commit refreshed cache (scheduled runs only)
-        if: github.event_name == 'schedule'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/cruz.sqlite
-          git diff --cached --quiet || git commit -m "Daily ingest $(date -u +%F)"
-          git push
-
       - if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v6
 
@@ -72,7 +92,7 @@ jobs:
           path: site
 
   deploy:
-    if: github.event_name != 'pull_request'
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && needs.build.result == 'success' }}
     needs: build
     runs-on: ubuntu-latest
     permissions:
