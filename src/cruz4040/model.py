@@ -56,7 +56,6 @@ def simulate(
     HR ~ Poisson(lam_hr) and SB ~ Poisson(lam_sb). A sum of n independent Poisson(lam)
     draws is Poisson(n * lam), so each sim draws games played ~ Binomial(remaining, p)
     and then one Poisson per stat.
-    
     """
     n = state.team_remaining
     need_hr = max(TARGET - state.hr, 0)
@@ -85,6 +84,12 @@ def run_season(
     sims: int = SIMS,
     k: float = K,
 ) -> list[SimResult]:
-    """Simulate from every date. One seeded generator, consumed in date order, so reruns match."""
-    rng = np.random.default_rng(seed)
-    return [simulate(s, baseline, rng, sims, k) for s in states]
+    """Simulate from every date.
+
+    Each date gets its own generator spawned from `seed`, so reruns match and a change
+    to one date's inputs does not shift the draws for any other date.
+    """
+    if baseline.games <= 0:
+        raise ValueError(f"{baseline.season} baseline has no games played")
+    rngs = [np.random.default_rng(s) for s in np.random.SeedSequence(seed).spawn(len(states))]
+    return [simulate(s, baseline, rng, sims, k) for s, rng in zip(states, rngs, strict=True)]

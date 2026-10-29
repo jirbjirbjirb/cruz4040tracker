@@ -54,3 +54,17 @@ def test_same_seed_same_output():
         assert x.prob == y.prob
         assert np.array_equal(x.final_hr, y.final_hr)
         assert np.array_equal(x.final_sb, y.final_sb)
+
+
+def test_changing_one_date_leaves_other_dates_unchanged():
+    states = [state(10, 10, 40, 45), state(12, 11, 44, 50), state(13, 12, 48, 55)]
+    edited = [states[0], state(5, 40, 44, 155), states[2]]  # middle date now hits the cutoff
+    a = run_season(states, BASELINE, sims=1_000)
+    b = run_season(edited, BASELINE, sims=1_000)
+    assert a[0].prob == b[0].prob
+    assert a[2].prob == b[2].prob
+
+
+def test_empty_baseline_is_rejected():
+    with pytest.raises(ValueError):
+        run_season([state(10, 10, 40, 45)], Baseline(2025, 0, 0, 0))
