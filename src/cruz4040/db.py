@@ -6,9 +6,6 @@ from pathlib import Path
 
 DB_PATH = Path("data/cruz.sqlite")
 SEASON_GAMES = 162
-
-# Regular-season statuses that mean the game is official. "Completed Early" is a
-# shortened (e.g. rain-ended) official game; it counts like "Final".
 COMPLETED_STATUSES = ("Final", "Game Over", "Completed Early")
 
 SCHEMA = """
@@ -27,7 +24,9 @@ CREATE TABLE IF NOT EXISTS batting (
     game_date TEXT    NOT NULL,
     season    INTEGER NOT NULL,
     hr        INTEGER NOT NULL,
-    sb        INTEGER NOT NULL
+    sb        INTEGER NOT NULL,
+    -- 1 if the game was official when this row was written; such rows are final.
+    official  INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS baseline (
@@ -38,11 +37,13 @@ CREATE TABLE IF NOT EXISTS baseline (
 );
 """
 
+# One row per game. A suspended game can be listed twice (start and resume) but counts once.
 _COMPLETED_GAMES = f"""
-SELECT game_pk, game_date FROM schedule
+SELECT game_pk, MAX(game_date) AS game_date FROM schedule
 WHERE season = :season
   AND game_type = 'R'
   AND status IN ({", ".join(f"'{s}'" for s in COMPLETED_STATUSES)})
+GROUP BY game_pk
 """
 
 _PROGRESS_SQL = f"""
@@ -107,6 +108,10 @@ def season_progress(conn: sqlite3.Connection, season: int) -> list[DateState]:
 def completed_team_games(conn: sqlite3.Connection, season: int) -> int:
     sql = f"SELECT COUNT(*) FROM ({_COMPLETED_GAMES})"
     return conn.execute(sql, {"season": season}).fetchone()[0]
+
+
+def completed_game_pks(conn: sqlite3.Connection, season: int) -> set[int]:
+    return {r[0] for r in conn.execute(_COMPLETED_GAMES, {"season": season})}
 
 
 def get_baseline(conn: sqlite3.Connection, season: int) -> Baseline | None:

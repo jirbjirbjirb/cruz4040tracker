@@ -105,7 +105,38 @@ def test_game_log_ignores_non_regular_and_unfinished_games(conn):
     assert states[-1].hr == 1
 
 
-def test_game_log_ingest_is_incremental(conn):
+def test_suspended_game_listed_on_two_dates_counts_once(conn):
+    store_schedule(conn, SEASON, [game(45, "2026-05-01"), game(45, "2026-05-02")])
+    store_game_log(conn, SEASON, [log(45, "2026-05-02", hr=1)])
+
+    assert db.completed_team_games(conn, SEASON) == 1
+    [state] = db.season_progress(conn, SEASON)
+    assert (state.game_date, state.hr, state.games_played, state.team_completed) == (
+        "2026-05-02",
+        1,
+        1,
+        1,
+    )
+
+
+def test_game_log_skips_settled_games(conn):
+    store_schedule(conn, SEASON, [game(50, "2026-04-10"), game(51, "2026-04-11")])
     assert store_game_log(conn, SEASON, [log(50, "2026-04-10", hr=1)]) == 1
     assert store_game_log(conn, SEASON, [log(50, "2026-04-10", hr=1), log(51, "2026-04-11")]) == 1
     assert conn.execute("SELECT COUNT(*) FROM batting").fetchone()[0] == 2
+
+
+def test_game_log_rewrites_unsettled_games(conn):
+    # Cached mid-game, before the schedule marks it final.
+    store_schedule(conn, SEASON, [game(60, "2026-04-12", status="In Progress")])
+    store_game_log(conn, SEASON, [log(60, "2026-04-12", hr=1)])
+
+    store_schedule(conn, SEASON, [game(60, "2026-04-12")])
+    assert store_game_log(conn, SEASON, [log(60, "2026-04-12", hr=2, sb=1)]) == 1
+    [state] = db.season_progress(conn, SEASON)
+    assert (state.hr, state.sb) == (2, 1)
+
+
+def test_duplicate_gamepk_in_one_batch_does_not_abort(conn):
+    store_schedule(conn, SEASON, [game(70, "2026-04-13")])
+    assert store_game_log(conn, SEASON, [log(70, "2026-04-13"), log(70, "2026-04-13", hr=1)]) == 1
