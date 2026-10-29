@@ -1,7 +1,7 @@
 [project]
 name = "cruz4040"
 version = "0.1.0"
-description = "Retrospective Monte Carlo of O'Neil Cruz's 2026 40/40 chances"
+description = "Retrospective Monte Carlo of Oneil Cruz's 2026 40/40 chances"
 readme = "README.md"
 authors = [
     { name = "Kirby Jayes", email = "rkjayes@gmail.com" }

@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cruz 40/40 Tracker {{SEASON}}</title>
+<meta name="description" content="How Oneil Cruz's chance of a 40 HR / 40 SB season changed across {{SEASON}}, from a seeded Monte Carlo model.">
+<style>
+{{STYLES}}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="eyebrow">Pittsburgh Pirates · {{SEASON}} season retrospective</p>
+    <h1>Did Oneil Cruz have a shot at 40/40?</h1>
+    <p class="lede">The chance that Cruz would finish {{SEASON}} with 40 home runs and 40 stolen bases, re-estimated after every Pirates game.</p>
+    <dl class="stats">
+      <div><dt>Final line</dt><dd>{{FINAL_LINE}}</dd></div>
+      <div><dt>Peak chance</dt><dd>{{PEAK_PROB}} <small style="font-size:.9rem;font-weight:400;color:var(--ink-2)">{{PEAK_DATE}}</small></dd></div>
+      <div><dt>Final chance</dt><dd>{{FINAL_PROB}}</dd></div>
+    </dl>
+  </header>
+
+  <section aria-labelledby="h-prob">
+    <h2 id="h-prob">Chance of 40/40, after each game</h2>
+    <div class="chart"><div id="prob" role="img" aria-label="Line chart of the 40/40 probability by date"></div></div>
+    <p class="caption">Shaded: his longest stretch of missed team games. Hover for the line on any date.</p>
+  </section>
+
+  <section aria-labelledby="h-totals">
+    <h2 id="h-totals">Home runs and steals vs. 40 pace</h2>
+    <div class="chart"><div id="totals" role="img" aria-label="Cumulative home runs and stolen bases compared with a 40-per-season pace"></div></div>
+    <p class="caption">The dotted line is the total a player would need on that date to finish at exactly 40, given Pirates games played.</p>
+  </section>
+
+  <section aria-labelledby="h-heat">
+    <h2 id="h-heat">Where the simulations ended</h2>
+    <div class="chart"><div id="heat" role="img" aria-label="Heatmap of simulated final home runs and stolen bases, with a date slider"></div></div>
+    <p class="caption">Each cell is the share of {{SEASON}} simulations ending at that HR and SB total. Drag the slider to change the date; the outlined corner is 40/40.</p>
+  </section>
+
+  <section aria-labelledby="h-story">
+    <h2 id="h-story">The season</h2>
+    <p>{{STORY}}</p>
+  </section>
+
+  <section aria-labelledby="h-method">
+    <h2 id="h-method">Method</h2>
+    <p>{{METHOD}}</p>
+  </section>
+
+  <footer>Data: MLB Stats API. Source and methodology: <a href="{{REPO_URL}}">{{REPO_URL}}</a></footer>
+</main>
+
+<script id="figures" type="application/json">{{FIGURES}}</script>
+<script src="https://cdn.plot.ly/plotly-{{PLOTLY_VERSION}}.min.js" charset="utf-8"></script>
+<script>
+(function () {
+  const source = JSON.parse(document.getElementById("figures").textContent);
+  const config = { responsive: true, displayModeBar: false };
+
+  function tokens() {
+    const cs = getComputedStyle(document.documentElement);
+    return (name) => cs.getPropertyValue("--" + name).trim();
+  }
+
+  function axis(t) {
+    return { gridcolor: t("grid"), linecolor: t("axis"), zeroline: false, showline: true,
+             tickfont: { color: t("ink-2") }, title: { font: { color: t("ink-2") } } };
+  }
+
+  function styleTrace(tr, t) {
+    if (tr.meta === "sequential") {
+      tr.colorscale = [0, 1, 2, 3, 4].map((i) => [i / 4, t("seq-" + i)]);
+      tr.colorbar = Object.assign({}, tr.colorbar, { tickfont: { color: t("ink-2") },
+        title: Object.assign({}, (tr.colorbar || {}).title, { font: { color: t("ink-2") } }), outlinewidth: 0 });
+    } else if (tr.meta === "reference") {
+      tr.line = Object.assign({}, tr.line, { color: t("muted") });
+    } else if (tr.meta) {
+      tr.line = Object.assign({}, tr.line, { color: t(tr.meta) });
+    }
+    return tr;
+  }
+
+  function themed(fig, t) {
+    const f = JSON.parse(JSON.stringify(fig));
+    f.data.forEach((tr) => styleTrace(tr, t));
+    (f.frames || []).forEach((fr) => fr.data.forEach((tr) => styleTrace(tr, t)));
+    const L = f.layout;
+    Object.assign(L, {
+      template: undefined,
+      autosize: true,
+      paper_bgcolor: t("surface"),
+      plot_bgcolor: t("surface"),
+      font: { family: getComputedStyle(document.body).fontFamily, color: t("ink-2"), size: 12 },
+      margin: Object.assign({ l: 44, r: 64, t: 28, b: 40 }, L.margin),
+      hoverlabel: { bgcolor: t("surface"), bordercolor: t("axis"), font: { color: t("ink") } },
+      showlegend: L.legend !== undefined,
+    });
+    L.xaxis = Object.assign({}, L.xaxis, axis(t));
+    L.yaxis = Object.assign({}, L.yaxis, axis(t));
+    if (L.legend) L.legend.font = { color: t("ink-2") };
+    if (L.title) L.title.font = Object.assign({}, L.title.font, { color: t("ink") });
+    (L.annotations || []).forEach((a) => {
+      a.font = { color: t("ink"), size: 12 };
+      a.arrowcolor = t("muted");
+      a.arrowwidth = 1;
+    });
+    (L.shapes || []).forEach((s) => {
+      if (s.name === "absence") s.fillcolor = t("shade");
+      if (s.name === "region") s.line = Object.assign({}, s.line, { color: t("ink") });
+    });
+    (L.sliders || []).forEach((sl) => Object.assign(sl, {
+      bgcolor: t("grid"), activebgcolor: t("series-1"), bordercolor: t("axis"),
+      tickcolor: t("axis"), font: { color: t("ink-2"), size: 10 },
+    }));
+    return f;
+  }
+
+  function draw() {
+    const t = tokens();
+    for (const id of ["prob", "totals", "heat"]) {
+      const f = themed(source[id], t);
+      Plotly.react(id, f.data, f.layout, config).then(() => {
+        if (f.frames) Plotly.addFrames(id, f.frames);
+      });
+    }
+  }
+
+  draw();
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+  new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+})();
+</script>
+</body>
+</html>
