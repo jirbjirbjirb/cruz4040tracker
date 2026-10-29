@@ -1,0 +1,86 @@
+name: Build and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  # Daily incremental ingest + rebuild during a live season. Disabled: the 2026
+  # season is over and data/cruz.sqlite holds the final cache.
+  # To enable next season:
+  #   1. Set the repo variable SEASON (e.g. 2027) under Settings > Variables > Actions.
+  #   2. Uncomment the two lines below. 13:00 UTC runs after overnight games are final.
+  # schedule:
+  #   - cron: "0 13 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  SEASON: ${{ vars.SEASON || '2026' }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      # Write access is only used by the scheduled run to commit the refreshed cache.
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+
+      - name: Install
+        run: uv sync --locked
+
+      - name: Ingest (scheduled runs only)
+        if: github.event_name == 'schedule'
+        run: uv run ingest --season "$SEASON"
+
+      - name: Lint
+        run: |
+          uv run ruff check
+          uv run ruff format --check
+
+      - name: Test
+        run: uv run pytest
+
+      - name: Build site
+        run: uv run build --season "$SEASON"
+
+      - name: Commit refreshed cache (scheduled runs only)
+        if: github.event_name == 'schedule'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/cruz.sqlite
+          git diff --cached --quiet || git commit -m "Daily ingest $(date -u +%F)"
+          git push
+
+      - if: github.event_name != 'pull_request'
+        uses: actions/configure-pages@v6
+
+      - if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5
