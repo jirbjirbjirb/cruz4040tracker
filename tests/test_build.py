@@ -57,13 +57,62 @@ def test_build_is_offline_and_deterministic(no_network, cache, tmp_path):
         assert chart_id in first
 
 
-def test_story_reports_absence():
-    states = [
+def states_from(games_played):
+    return [
         db.DateState(f"2026-04-{d:02d}", 0, 0, gp, d, db.SEASON_GAMES - d)
-        for d, gp in zip(range(1, 8), [1, 2, 2, 2, 3, 3, 4], strict=True)
+        for d, gp in enumerate(games_played, start=1)
     ]
-    a = build.longest_absence(states)
+
+
+def test_longest_absence_and_shading_end():
+    a = build.longest_absence(states_from([1, 2, 2, 2, 3, 3, 4]))
     assert (a.first_missed, a.last_missed, a.team_games) == ("2026-04-03", "2026-04-04", 2)
+    assert a.shade_to == "2026-04-05"
+
+
+def test_absence_from_opening_day():
+    a = build.longest_absence(states_from([0, 0, 0, 1, 2]))
+    assert (a.first_missed, a.last_missed, a.team_games) == ("2026-04-01", "2026-04-03", 3)
+
+
+def test_absence_through_season_end():
+    a = build.longest_absence(states_from([1, 2, 2, 2]))
+    assert (a.team_games, a.shade_to) == (2, "2026-04-04")
+
+
+def test_no_absence():
+    assert build.longest_absence(states_from([1, 2, 3])) is None
+
+
+def story_for(final, absence_first, peak_i=1):
+    states = [
+        db.DateState("2026-04-01", 1, 1, 1, 1, 161),
+        db.DateState("2026-05-01", 9, 9, 30, 30, 132),
+        final,
+    ]
+    absence = build.Absence(absence_first, absence_first, 3, absence_first)
+    story = build.Story(2026, final, peak_i, None, absence)
+    return build.story_paragraph(states, [0.1, 0.3, 0.0], story)
+
+
+def test_story_orders_absence_relative_to_peak():
+    final = db.DateState("2026-09-27", 20, 30, 97, 162, 0)
+    assert "He then missed" in story_for(final, "2026-06-01")
+    assert "He missed" in story_for(final, "2026-04-10")
+
+
+def test_story_wording_for_reached_and_in_progress():
+    reached = story_for(db.DateState("2026-09-27", 41, 42, 150, 162, 0), "2026-06-01")
+    assert "a 40/40 season" in reached and "short of" not in reached
+    live = story_for(db.DateState("2026-07-01", 20, 20, 80, 85, 77), "2026-06-01")
+    assert live.startswith("Through 85 Pirates games in 2026")
+
+
+def test_missing_cache_is_not_created(tmp_path):
+    path = tmp_path / "missing.sqlite"
+    with pytest.raises(FileNotFoundError):
+        build.build(path, tmp_path / "out", SEASON)
+    assert not path.exists()
 
 
 def test_first_permanent_zero():

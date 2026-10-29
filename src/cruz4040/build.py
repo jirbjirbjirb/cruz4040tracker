@@ -24,6 +24,9 @@ class Absence:
     first_missed: str
     last_missed: str
     team_games: int
+    # Date he returned (or the last missed date if he never did). The step line holds
+    # each value until the next date, so the shading runs to here.
+    shade_to: str
 
 
 @dataclass(frozen=True)
@@ -35,27 +38,37 @@ class Story:
     absence: Absence | None
 
 
-def fmt_date(iso: str) -> str:
+def fmt_date(iso: str, month: str = "%B") -> str:
     d = dt.date.fromisoformat(iso)
-    return f"{d:%B} {d.day}"
+    return f"{d:{month}} {d.day}"
 
 
 def longest_absence(states: list[db.DateState]) -> Absence | None:
-    """Longest run of consecutive team games Cruz did not play."""
-    best: Absence | None = None
+    """Longest run of consecutive team games Cruz did not play, opening day included."""
+    runs = []  # (first index, last index, team games completed before the run)
     start = None
-    for prev, cur in zip(states, states[1:], strict=False):
-        missed_all = cur.games_played == prev.games_played
-        if missed_all and start is None:
-            start = (cur, prev.team_completed)
-        if start is not None and (not missed_all or cur is states[-1]):
-            last = cur if missed_all else prev
-            first, before = start
-            run = Absence(first.game_date, last.game_date, last.team_completed - before)
-            if best is None or run.team_games > best.team_games:
-                best = run
+    prev_gp, prev_done = 0, 0
+    for i, s in enumerate(states):
+        if s.games_played == prev_gp:
+            if start is None:
+                start = (i, prev_done)
+        elif start is not None:
+            runs.append((start[0], i - 1, start[1]))
             start = None
-    return best
+        prev_gp, prev_done = s.games_played, s.team_completed
+    if start is not None:
+        runs.append((start[0], len(states) - 1, start[1]))
+    if not runs:
+        return None
+
+    first, last, before = max(runs, key=lambda r: states[r[1]].team_completed - r[2])
+    shade_to = states[last + 1] if last + 1 < len(states) else states[last]
+    return Absence(
+        states[first].game_date,
+        states[last].game_date,
+        states[last].team_completed - before,
+        shade_to.game_date,
+    )
 
 
 def first_permanent_zero(probs: list[float]) -> int | None:
@@ -165,7 +178,7 @@ def add_absence(fig: go.Figure, absence: Absence | None) -> None:
         return
     fig.add_vrect(
         x0=absence.first_missed,
-        x1=absence.last_missed,
+        x1=absence.shade_to,
         name="absence",
         layer="below",
         line_width=0,
@@ -241,7 +254,7 @@ def heatmap_figure(
                 "pad": {"t": 36},
                 "steps": [
                     {
-                        "label": dt.date.fromisoformat(n).strftime("%b %d").replace(" 0", " "),
+                        "label": fmt_date(n, "%b"),
                         "method": "animate",
                         "args": [
                             [n],
@@ -273,18 +286,33 @@ def frame_title(states: list[db.DateState], results: list[model.SimResult], i: i
 def story_paragraph(states: list[db.DateState], probs: list[float], story: Story) -> str:
     f = story.final
     peak = states[story.peak_i]
+    if f.team_remaining > 0:
+        opening = (
+            f"Through {f.team_completed} Pirates games in {story.season}, Cruz has {f.hr} "
+            f"home runs and {f.sb} stolen bases in {f.games_played} games played."
+        )
+    elif f.hr >= model.TARGET and f.sb >= model.TARGET:
+        opening = (
+            f"Cruz finished {story.season} with {f.hr} home runs and {f.sb} stolen bases "
+            f"in {f.games_played} games: a 40/40 season."
+        )
+    else:
+        opening = (
+            f"Cruz finished {story.season} with {f.hr} home runs and {f.sb} stolen bases in "
+            f"{f.games_played} of {f.team_completed} team games, "
+            f"{max(model.TARGET - f.hr, 0)} homers and {max(model.TARGET - f.sb, 0)} steals"
+            " short of 40/40."
+        )
     parts = [
-        f"Cruz finished {story.season} with {f.hr} home runs and {f.sb} stolen bases in "
-        f"{f.games_played} of {f.team_completed} team games, "
-        f"{max(model.TARGET - f.hr, 0)} homers and {max(model.TARGET - f.sb, 0)} steals"
-        " short of 40/40.",
+        opening,
         f"His chances peaked at {probs[story.peak_i]:.0%} on {fmt_date(peak.game_date)}, "
         f"{peak.team_completed} games in, with {peak.hr} HR and {peak.sb} SB.",
     ]
     a = story.absence
     if a is not None:
         parts.append(
-            f"He then missed {a.team_games} straight team games, "
+            ("He then missed" if a.first_missed > peak.game_date else "He missed")
+            + f" {a.team_games} straight team games, "
             f"from {fmt_date(a.first_missed)} through {fmt_date(a.last_missed)}."
         )
     if story.zero_i is not None:
@@ -329,9 +357,9 @@ def render(states, baseline, results, season: int) -> str:
     }
     payload = json.dumps({k: json.loads(f.to_json()) for k, f in figs.items()}, sort_keys=True)
     here = Path(__file__).parent
-    template = (here / "template.html").read_text()
+    template = (here / "template.html").read_text(encoding="utf-8")
     replacements = {
-        "{{STYLES}}": (here / "styles.css").read_text().rstrip(),
+        "{{STYLES}}": (here / "styles.css").read_text(encoding="utf-8").rstrip(),
         "{{PLOTLY_VERSION}}": get_plotlyjs_version(),
         "{{SEASON}}": str(season),
         "{{FINAL_PROB}}": f"{probs[-1]:.0%}",
@@ -349,6 +377,8 @@ def render(states, baseline, results, season: int) -> str:
 
 
 def build(db_path: Path | str, out_dir: Path, season: int) -> Path:
+    if not Path(db_path).exists():
+        raise FileNotFoundError(f"no cache at {db_path}; run ingest")
     conn = db.connect(db_path)
     try:
         states = db.season_progress(conn, season)
@@ -361,7 +391,7 @@ def build(db_path: Path | str, out_dir: Path, season: int) -> Path:
     results = model.run_season(states, baseline)
     out_dir.mkdir(parents=True, exist_ok=True)
     out = out_dir / "index.html"
-    out.write_text(render(states, baseline, results, season))
+    out.write_text(render(states, baseline, results, season), encoding="utf-8")
     return out
 
 
