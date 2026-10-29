@@ -49,6 +49,26 @@ The project started from a terminal script that printed Cruz's HR/SB totals and 
 
 **Plan.** Scope, out-of-scope items, and success criteria were written down first as a handoff document, then broken into five sprints, each tracked in a [sprint plan](https://claude.ai/artifact/5fZVE3exroVCcVJw5a59rr).
 
+**Working with Claude Code.** Implementation ran through Claude Code (Opus 5.5) as an agent, with a person deciding at every boundary.
+
+- **Delegated to the agent:**
+  - Turn the handoff into the sprint plan.
+  - Probe live Stats API responses before writing any parser.
+  - Write each sprint's code and tests, then run lint, tests and builds.
+  - Check the page with headless-Chrome screenshots at desktop and phone width, light and dark.
+  - Validate the chart palette for colorblind safety with a script instead of by eye.
+  - Open PRs and run `/code-review` in a background agent while other work continued.
+- **Kept with the person:**
+  - Scope and success criteria.
+  - Reading each diff in VS Code, then approving or making every commit, push and merge.
+  - Calls the agent raised but did not make, such as keeping raw availability after seeing both versions' numbers.
+  - Mid-sprint direction: moving CSS into its own file, dropping a breakpoint redraw after asking why it existed, correcting the player's name.
+- **Standing rules given to the agent:**
+  - Ask before every commit, and warn before any commit to `main`.
+  - No hyphens in branch names.
+  - Tests never touch the network, and the build reads only the cache.
+- **Review triage stayed explicit:** 22 of 38 automated findings were fixed. Each skipped finding has a reason in its PR thread.
+
 **Loop per sprint.** Every sprint ran the same way:
 
 1. Work on its own branch.
