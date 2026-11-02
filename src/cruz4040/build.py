@@ -166,17 +166,15 @@ def frame_title(states: list[db.DateState], results: list[model.SimResult], i: i
 
 def method_paragraph(baseline: db.Baseline) -> str:
     return (
-        f"After every completed Pirates game, the model simulates the rest of the season "
+        f"After each game, the model simulates the rest of the season "
         f"{model.SIMS:,} times. Cruz's chance of appearing in a given simulated game is based "
         f"on his availability prior to the simulation. When the simulation decides that he does "
         f"play in a given game, home runs and steals accrued during that game are determined by "
         f"Poisson draws whose per-game HR and SB rates blend his {baseline.season + 1} rate "
         f"with his {baseline.season} rate. The {baseline.season + 1} weight is "
-        f"g / (g + {model.K}), where g is his games "
-        f"played. As the {baseline.season + 1} season goes on, the influence of the "
-        f"{baseline.season} season in predicting future performance is reduced. The chart shows "
-        f"the share of simulations that end with at least {model.TARGET} HR and "
-        f"{model.TARGET} SB."
+        f"g / (g + {model.K}), where g represents games played. As the {baseline.season + 1} "
+        f"season goes on, the {baseline.season} season's influence on projected HR and SB "
+        f"rates is reduced."
     )
 
 

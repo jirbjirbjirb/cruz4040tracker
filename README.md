@@ -14,7 +14,7 @@ MLB Stats API ──ingest──▶ data/cruz.sqlite ──build──▶ site/i
 ```
 
 1. **Ingest** (`uv run ingest`) fetches the Pirates schedule, Cruz's game log, and his prior-season line into SQLite. Re-runs skip games already stored as official.
-2. **Build** (`uv run build`) reads only the SQLite cache, never the network. SQL produces one row per date with a completed team game; the model simulates from each date; Plotly renders three views into one self-contained HTML file.
+2. **Build** (`uv run build`) reads only the SQLite cache, never the network. SQL produces one row per date with a completed team game; the model simulates from each date; Plotly renders two views into one self-contained HTML file: a heatmap of simulated final HR/SB totals with a date slider, and cumulative HR and SB against a 40 pace.
 3. **CI** lints, tests, builds, and deploys `site/` to GitHub Pages on every push to `main`.
 
 ### Counting games
