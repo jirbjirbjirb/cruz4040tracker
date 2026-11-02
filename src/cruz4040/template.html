@@ -163,7 +163,6 @@
             a.arrowwidth = 1;
           });
           (L.shapes || []).forEach((s) => {
-            if (s.name === "absence") s.fillcolor = t("shade");
             if (s.name === "region")
               s.line = Object.assign({}, s.line, { color: t("ink") });
           });

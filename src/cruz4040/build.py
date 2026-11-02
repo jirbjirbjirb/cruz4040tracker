@@ -4,7 +4,6 @@ import argparse
 import datetime as dt
 import html
 import json
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -19,64 +18,9 @@ REPO_URL = "https://github.com/jirbjirbjirb/cruz4040tracker"
 FRAME_EVERY = 5
 
 
-@dataclass(frozen=True)
-class Absence:
-    first_missed: str
-    last_missed: str
-    team_games: int
-    # Date he returned (or the last missed date if he never did). The step line holds
-    # each value until the next date, so the shading runs to here.
-    shade_to: str
-
-
-@dataclass(frozen=True)
-class Story:
-    season: int
-    final: db.DateState
-    peak_i: int
-    zero_i: int | None
-    absence: Absence | None
-
-
 def fmt_date(iso: str, month: str = "%B") -> str:
     d = dt.date.fromisoformat(iso)
     return f"{d:{month}} {d.day}"
-
-
-def longest_absence(states: list[db.DateState]) -> Absence | None:
-    """Longest run of consecutive team games Cruz did not play, opening day included."""
-    runs = []  # (first index, last index, team games completed before the run)
-    start = None
-    prev_gp, prev_done = 0, 0
-    for i, s in enumerate(states):
-        if s.games_played == prev_gp:
-            if start is None:
-                start = (i, prev_done)
-        elif start is not None:
-            runs.append((start[0], i - 1, start[1]))
-            start = None
-        prev_gp, prev_done = s.games_played, s.team_completed
-    if start is not None:
-        runs.append((start[0], len(states) - 1, start[1]))
-    if not runs:
-        return None
-
-    first, last, before = max(runs, key=lambda r: states[r[1]].team_completed - r[2])
-    shade_to = states[last + 1] if last + 1 < len(states) else states[last]
-    return Absence(
-        states[first].game_date,
-        states[last].game_date,
-        states[last].team_completed - before,
-        shade_to.game_date,
-    )
-
-
-def first_permanent_zero(probs: list[float]) -> int | None:
-    """Index of the date from which the probability stays at 0 through season's end."""
-    i = len(probs)
-    while i > 0 and probs[i - 1] == 0:
-        i -= 1
-    return i if i < len(probs) else None
 
 
 def totals_figure(states: list[db.DateState]) -> go.Figure:
@@ -125,9 +69,9 @@ def totals_figure(states: list[db.DateState]) -> go.Figure:
 
 
 def heatmap_figure(
-    states: list[db.DateState], results: list[model.SimResult], story: Story
+    states: list[db.DateState], results: list[model.SimResult], peak_i: int
 ) -> go.Figure:
-    picks = sorted(set(range(0, len(states), FRAME_EVERY)) | {story.peak_i, len(states) - 1})
+    picks = sorted(set(range(0, len(states), FRAME_EVERY)) | {peak_i, len(states) - 1})
     hr_lo = min(int(results[i].final_hr.min()) for i in picks)
     hr_hi = max(int(results[i].final_hr.max()) for i in picks)
     sb_lo = min(int(results[i].final_sb.min()) for i in picks)
@@ -153,9 +97,9 @@ def heatmap_figure(
         )
 
     names = [states[i].game_date for i in picks]
-    start = picks.index(story.peak_i)
+    start = picks.index(peak_i)
     fig = go.Figure(
-        data=[heat(story.peak_i)],
+        data=[heat(peak_i)],
         frames=[
             go.Frame(
                 data=[heat(i)], name=n, layout={"title": {"text": frame_title(states, results, i)}}
@@ -183,7 +127,7 @@ def heatmap_figure(
         yshift=-2,
     )
     fig.update_layout(
-        title={"text": frame_title(states, results, story.peak_i), "x": 0, "font": {"size": 13}},
+        title={"text": frame_title(states, results, peak_i), "x": 0, "font": {"size": 13}},
         sliders=[
             {
                 "active": start,
@@ -220,75 +164,28 @@ def frame_title(states: list[db.DateState], results: list[model.SimResult], i: i
     )
 
 
-def story_paragraph(states: list[db.DateState], probs: list[float], story: Story) -> str:
-    f = story.final
-    peak = states[story.peak_i]
-    if f.team_remaining > 0:
-        opening = (
-            f"Through {f.team_completed} Pirates games in {story.season}, Cruz has {f.hr} "
-            f"home runs and {f.sb} stolen bases in {f.games_played} games played."
-        )
-    elif f.hr >= model.TARGET and f.sb >= model.TARGET:
-        opening = (
-            f"Cruz finished {story.season} with {f.hr} home runs and {f.sb} stolen bases "
-            f"in {f.games_played} games: a 40/40 season."
-        )
-    else:
-        opening = (
-            f"Cruz finished {story.season} with {f.hr} home runs and {f.sb} stolen bases in "
-            f"{f.games_played} of {f.team_completed} team games, "
-            f"{max(model.TARGET - f.hr, 0)} homers and {max(model.TARGET - f.sb, 0)} steals"
-            " short of 40/40."
-        )
-    parts = [
-        opening,
-        f"His chances peaked at {probs[story.peak_i]:.0%} on {fmt_date(peak.game_date)}, "
-        f"{peak.team_completed} games in, with {peak.hr} HR and {peak.sb} SB.",
-    ]
-    a = story.absence
-    if a is not None:
-        parts.append(
-            ("He then missed" if a.first_missed > peak.game_date else "He missed")
-            + f" {a.team_games} straight team games, "
-            f"from {fmt_date(a.first_missed)} through {fmt_date(a.last_missed)}."
-        )
-    if story.zero_i is not None:
-        z = states[story.zero_i]
-        during = a is not None and a.first_missed <= z.game_date <= a.last_missed
-        parts.append(
-            f"The model's estimate hit 0% on {fmt_date(z.game_date)}"
-            + (", during that absence," if during else ",")
-            + f" with {z.team_remaining} games left, and never came back."
-        )
-    return " ".join(parts)
-
-
 def method_paragraph(baseline: db.Baseline) -> str:
     return (
         f"After every completed Pirates game, the model simulates the rest of the season "
         f"{model.SIMS:,} times. Cruz's chance of appearing in a given simulated game is based "
         f"on his availability prior to the simulation. When the simulation decides that he does "
         f"play in a given game, home runs and steals accrued during that game are determined by "
-        f"Poisson draws whose per-game HR and SB rates blend his {baseline.season + 1} rate with his "
-        f"{baseline.season} rate. The {baseline.season + 1} weight is g / (g + {model.K}), where g is his games "
-        f"played. As the 2026 season goes on, the influence of the 2025 season in predicting "
-        f"future performance is reduced. The chart shows the share "
-        f"of simulations that end with at least 40 HR and 40 SB."
+        f"Poisson draws whose per-game HR and SB rates blend his {baseline.season + 1} rate "
+        f"with his {baseline.season} rate. The {baseline.season + 1} weight is "
+        f"g / (g + {model.K}), where g is his games "
+        f"played. As the {baseline.season + 1} season goes on, the influence of the "
+        f"{baseline.season} season in predicting future performance is reduced. The chart shows "
+        f"the share of simulations that end with at least {model.TARGET} HR and "
+        f"{model.TARGET} SB."
     )
 
 
 def render(states, baseline, results, season: int) -> str:
     probs = [r.prob for r in results]
-    story = Story(
-        season=season,
-        final=states[-1],
-        peak_i=int(np.argmax(probs)),
-        zero_i=first_permanent_zero(probs),
-        absence=longest_absence(states),
-    )
+    peak_i = int(np.argmax(probs))
     figs = {
         "totals": totals_figure(states),
-        "heat": heatmap_figure(states, results, story),
+        "heat": heatmap_figure(states, results, peak_i),
     }
     payload = json.dumps({k: json.loads(f.to_json()) for k, f in figs.items()}, sort_keys=True)
     here = Path(__file__).parent
@@ -297,10 +194,8 @@ def render(states, baseline, results, season: int) -> str:
         "{{STYLES}}": (here / "styles.css").read_text(encoding="utf-8").rstrip(),
         "{{PLOTLY_VERSION}}": get_plotlyjs_version(),
         "{{SEASON}}": str(season),
-        "{{FINAL_PROB}}": f"{probs[-1]:.0%}",
-        "{{PEAK_PROB}}": f"{probs[story.peak_i]:.0%}",
-        "{{PEAK_DATE}}": fmt_date(states[story.peak_i].game_date),
-        "{{FINAL_LINE}}": f"{states[-1].hr} HR · {states[-1].sb} SB",
+        "{{PEAK_PROB}}": f"{probs[peak_i]:.0%}",
+        "{{PEAK_DATE}}": fmt_date(states[peak_i].game_date),
         "{{METHOD}}": html.escape(method_paragraph(baseline)),
         "{{REPO_URL}}": REPO_URL,
         "{{FIGURES}}": payload.replace("</", "<\\/"),
