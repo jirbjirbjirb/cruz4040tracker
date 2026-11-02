@@ -79,55 +79,6 @@ def first_permanent_zero(probs: list[float]) -> int | None:
     return i if i < len(probs) else None
 
 
-def probability_figure(states: list[db.DateState], probs: list[float], story: Story) -> go.Figure:
-    dates = [s.game_date for s in states]
-    custom = [[s.hr, s.sb, s.games_played, s.team_remaining] for s in states]
-    fig = go.Figure(
-        go.Scatter(
-            x=dates,
-            y=probs,
-            mode="lines",
-            meta="series-1",
-            line={"width": 2, "shape": "hv"},
-            customdata=custom,
-            hovertemplate=(
-                "<b>%{x|%b %-d}</b><br>P(40/40): %{y:.1%}<br>"
-                "%{customdata[0]} HR · %{customdata[1]} SB<br>"
-                "%{customdata[2]} games played · %{customdata[3]} team games left"
-                "<extra></extra>"
-            ),
-        )
-    )
-    peak = states[story.peak_i]
-    annotations = [
-        {
-            "x": peak.game_date,
-            "y": probs[story.peak_i],
-            "text": f"Peak {probs[story.peak_i]:.0%}<br>{fmt_date(peak.game_date)}",
-            "ax": 20,
-            "ay": -10,
-            "xanchor": "left",
-        }
-    ]
-    if story.zero_i is not None:
-        z = states[story.zero_i]
-        annotations.append(
-            {
-                "x": z.game_date,
-                "y": 0,
-                "text": f"0% from {fmt_date(z.game_date)}",
-                "ax": 30,
-                "ay": -36,
-                "xanchor": "left",
-            }
-        )
-    fig.update_layout(annotations=annotations)
-    add_absence(fig, story.absence)
-    fig.update_xaxes(range=[dates[0], dates[-1]])
-    fig.update_yaxes(tickformat=".0%", rangemode="tozero")
-    return fig
-
-
 def totals_figure(states: list[db.DateState]) -> go.Figure:
     dates = [s.game_date for s in states]
     pace = [model.TARGET * s.team_completed / db.SEASON_GAMES for s in states]
@@ -171,20 +122,6 @@ def totals_figure(states: list[db.DateState]) -> go.Figure:
     fig.update_xaxes(range=[dates[0], dates[-1]])
     fig.update_yaxes(rangemode="tozero")
     return fig
-
-
-def add_absence(fig: go.Figure, absence: Absence | None) -> None:
-    if absence is None:
-        return
-    fig.add_vrect(
-        x0=absence.first_missed,
-        x1=absence.shade_to,
-        name="absence",
-        layer="below",
-        line_width=0,
-        annotation_text=f"Out<br>{absence.team_games} games",
-        annotation_position="top right",
-    )
 
 
 def heatmap_figure(
@@ -329,15 +266,14 @@ def story_paragraph(states: list[db.DateState], probs: list[float], story: Story
 def method_paragraph(baseline: db.Baseline) -> str:
     return (
         f"After every completed Pirates game, the model simulates the rest of the season "
-        f"{model.SIMS:,} times. Cruz plays each remaining game with probability equal to his "
-        f"share of team games played so far. When he plays, home runs and steals are Poisson "
-        f"draws whose per-game rates blend his {baseline.season + 1} rate with his "
-        f"{baseline.season} rate ({baseline.hr} HR and {baseline.sb} SB in {baseline.games} "
-        f"games). The {baseline.season + 1} weight is g / (g + {model.K}), where g is his games "
-        f"played, so the two seasons count equally at {model.K} games. The chart shows the share "
-        f"of simulations that end with at least 40 HR and 40 SB. A fixed seed "
-        f"({model.SEED}) makes every rebuild identical. The model assumes games missed so far "
-        f"predict games missed later and ignores streaks, matchups and injuries."
+        f"{model.SIMS:,} times. Cruz's chance of appearing in a given simulated game is based "
+        f"on his availability prior to the simulation. When the simulation decides that he does "
+        f"play in a given game, home runs and steals accrued during that game are determined by "
+        f"Poisson draws whose per-game HR and SB rates blend his {baseline.season + 1} rate with his "
+        f"{baseline.season} rate. The {baseline.season + 1} weight is g / (g + {model.K}), where g is his games "
+        f"played. As the 2026 season goes on, the influence of the 2025 season in predicting "
+        f"future performance is reduced. The chart shows the share "
+        f"of simulations that end with at least 40 HR and 40 SB."
     )
 
 
@@ -351,7 +287,6 @@ def render(states, baseline, results, season: int) -> str:
         absence=longest_absence(states),
     )
     figs = {
-        "prob": probability_figure(states, probs, story),
         "totals": totals_figure(states),
         "heat": heatmap_figure(states, results, story),
     }
@@ -366,7 +301,6 @@ def render(states, baseline, results, season: int) -> str:
         "{{PEAK_PROB}}": f"{probs[story.peak_i]:.0%}",
         "{{PEAK_DATE}}": fmt_date(states[story.peak_i].game_date),
         "{{FINAL_LINE}}": f"{states[-1].hr} HR · {states[-1].sb} SB",
-        "{{STORY}}": html.escape(story_paragraph(states, probs, story)),
         "{{METHOD}}": html.escape(method_paragraph(baseline)),
         "{{REPO_URL}}": REPO_URL,
         "{{FIGURES}}": payload.replace("</", "<\\/"),

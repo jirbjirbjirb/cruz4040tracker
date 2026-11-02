@@ -53,7 +53,7 @@ def test_build_is_offline_and_deterministic(no_network, cache, tmp_path):
 
     assert first == second
     assert "{{" not in first
-    for chart_id in ('id="prob"', 'id="totals"', 'id="heat"'):
+    for chart_id in ('id="totals"', 'id="heat"'):
         assert chart_id in first
 
 
